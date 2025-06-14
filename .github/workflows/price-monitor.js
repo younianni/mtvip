@@ -367,19 +367,19 @@ async function updateGitHubPagesData(history) {
     
     console.log('已更新GitHub Pages数据:', filePath);
     
-    // 验证文件是否存在
+    // 验证文件内容
+    const fileContent = await fs.readFile(filePath, 'utf8');
     try {
-      await fs.access(filePath);
-      console.log('验证: 文件存在:', filePath);
+      JSON.parse(fileContent);
+      console.log('验证: 文件内容是有效的JSON');
     } catch (error) {
-      console.error('验证失败: 文件不存在:', filePath);
-      throw error;
+      console.error('验证失败: 文件内容不是有效的JSON');
+      console.error('文件内容:', fileContent);
+      throw new Error('生成的JSON文件格式不正确');
     }
+    
   } catch (error) {
     console.error('更新GitHub Pages数据失败:', error);
     throw error;
   }
 }
-
-// 执行主函数
-main();
