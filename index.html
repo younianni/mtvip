@@ -1,0 +1,404 @@
+<!-- docs/index.html -->
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MT卡密价格监控</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://cdn.jsdelivr.net/npm/font-awesome@4.7.0/css/font-awesome.min.css" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.8/dist/chart.umd.min.js"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            primary: '#165DFF',
+            secondary: '#0FC6C2',
+            success: '#00B42A',
+            warning: '#FF7D00',
+            danger: '#F53F3F',
+            info: '#86909C',
+            light: '#F2F3F5',
+            dark: '#1D2129',
+          },
+          fontFamily: {
+            inter: ['Inter', 'system-ui', 'sans-serif'],
+          },
+        },
+      }
+    }
+  </script>
+  <style type="text/tailwindcss">
+    @layer utilities {
+      .content-auto {
+        content-visibility: auto;
+      }
+      .card-shadow {
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+      }
+      .hover-scale {
+        transition: transform 0.3s ease;
+      }
+      .hover-scale:hover {
+        transform: scale(1.02);
+      }
+    }
+  </style>
+</head>
+<body class="font-inter bg-gray-50 text-dark">
+  <header class="bg-white shadow-sm sticky top-0 z-50">
+    <div class="container mx-auto px-4 py-4 flex justify-between items-center">
+      <div class="flex items-center space-x-2">
+        <i class="fa fa-line-chart text-primary text-2xl"></i>
+        <h1 class="text-xl font-bold text-primary">MT卡密价格监控</h1>
+      </div>
+      <div id="last-updated" class="text-sm text-gray-500"></div>
+    </div>
+  </header>
+
+  <main class="container mx-auto px-4 py-8">
+    <div class="mb-8">
+      <h2 class="text-2xl font-bold mb-4">最新价格</h2>
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-6" id="latest-prices">
+        <!-- 最新价格卡片将在这里动态生成 -->
+      </div>
+    </div>
+
+    <div class="mb-8">
+      <h2 class="text-2xl font-bold mb-4">价格走势</h2>
+      <div class="bg-white rounded-lg p-6 card-shadow">
+        <select id="product-selector" class="mb-6 p-2 border border-gray-300 rounded">
+          <!-- 产品选项将在这里动态生成 -->
+        </select>
+        <div class="h-[400px]">
+          <canvas id="price-chart"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <h2 class="text-2xl font-bold mb-4">历史价格数据</h2>
+      <div id="price-history" class="space-y-6">
+        <!-- 历史价格表格将在这里动态生成 -->
+      </div>
+    </div>
+  </main>
+
+  <footer class="bg-dark text-white py-8 mt-12">
+    <div class="container mx-auto px-4">
+      <div class="flex flex-col md:flex-row justify-between items-center">
+        <div class="mb-4 md:mb-0">
+          <div class="flex items-center space-x-2">
+            <i class="fa fa-line-chart text-primary text-xl"></i>
+            <span class="font-bold text-lg">MT卡密价格监控</span>
+          </div>
+          <p class="text-gray-400 text-sm mt-2">实时监控MT卡密价格变动</p>
+        </div>
+        <div class="text-sm text-gray-400">
+          <p>© 2025 MT卡密价格监控系统</p>
+          <p class="mt-1">数据每24小时更新一次</p>
+        </div>
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    let priceChart;
+    let priceData = {};
+    
+    // 格式化日期
+    function formatDate(dateStr) {
+      const date = new Date(dateStr);
+      return date.toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' });
+    }
+    
+    // 格式化时间
+    function formatDateTime(dateStr) {
+      const date = new Date(dateStr);
+      return date.toLocaleString('zh-CN');
+    }
+    
+    // 加载价格数据
+    async function loadPriceData() {
+      try {
+        const response = await fetch('price-data.json');
+        if (!response.ok) {
+          throw new Error(`HTTP错误! 状态: ${response.status}`);
+        }
+        priceData = await response.json();
+        renderLatestPrices();
+        renderProductSelector();
+        renderPriceChart();
+        renderPriceHistory();
+        document.getElementById('last-updated').textContent = `最后更新: ${formatDateTime(priceData.lastUpdated)}`;
+      } catch (error) {
+        console.error('加载价格数据失败:', error);
+        alert('加载数据失败，请稍后重试');
+      }
+    }
+    
+    // 渲染最新价格卡片
+    function renderLatestPrices() {
+      const container = document.getElementById('latest-prices');
+      container.innerHTML = '';
+      
+      Object.entries(priceData.latestPrices).forEach(([product, info]) => {
+        const card = document.createElement('div');
+        card.className = 'bg-white rounded-lg p-6 card-shadow hover-scale';
+        
+        // 获取历史价格来比较
+        const history = priceData.productHistories[product] || [];
+        let change = 0;
+        let changePercent = 0;
+        
+        if (history.length >= 2) {
+          const latestPrice = history[history.length - 1].price;
+          const prevPrice = history[history.length - 2].price;
+          change = latestPrice - prevPrice;
+          changePercent = ((change / prevPrice) * 100).toFixed(2);
+        }
+        
+        // 确定价格变动的样式
+        let changeClass = 'text-info';
+        let changeIcon = '';
+        
+        if (change > 0) {
+          changeClass = 'text-danger';
+          changeIcon = '<i class="fa fa-arrow-up mr-1"></i>';
+        } else if (change < 0) {
+          changeClass = 'text-success';
+          changeIcon = '<i class="fa fa-arrow-down mr-1"></i>';
+        }
+        
+        card.innerHTML = `
+          <div class="flex justify-between items-start mb-4">
+            <h3 class="font-bold text-lg">${product}</h3>
+            <span class="text-primary font-bold text-xl">¥${info.price}</span>
+          </div>
+          <div class="text-sm ${changeClass}">
+            ${change !== 0 ? `${changeIcon} ${Math.abs(change)} (${Math.abs(changePercent)}%)` : '价格无变动'}
+          </div>
+          <div class="mt-4 text-xs text-gray-500">
+            数据更新于 ${formatDate(info.timestamp)}
+          </div>
+        `;
+        
+        container.appendChild(card);
+      });
+    }
+    
+    // 渲染产品选择器
+    function renderProductSelector() {
+      const selector = document.getElementById('product-selector');
+      selector.innerHTML = '';
+      
+      Object.keys(priceData.productHistories).forEach(product => {
+        const option = document.createElement('option');
+        option.value = product;
+        option.textContent = product;
+        selector.appendChild(option);
+      });
+      
+      selector.addEventListener('change', renderPriceChart);
+    }
+    
+    // 渲染价格图表
+    function renderPriceChart() {
+      const ctx = document.getElementById('price-chart').getContext('2d');
+      const product = document.getElementById('product-selector').value;
+      const history = priceData.productHistories[product] || [];
+      
+      if (history.length === 0) {
+        if (priceChart) {
+          priceChart.destroy();
+          priceChart = null;
+        }
+        return;
+      }
+      
+      // 准备图表数据
+      const dates = history.map(item => formatDate(item.date));
+      const prices = history.map(item => item.price);
+      
+      // 计算趋势线
+      const trendData = calculateTrend(prices);
+      
+      // 如果已有图表，销毁它
+      if (priceChart) {
+        priceChart.destroy();
+      }
+      
+      // 创建新图表
+      priceChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: dates,
+          datasets: [
+            {
+              label: '实际价格',
+              data: prices,
+              borderColor: '#165DFF',
+              backgroundColor: 'rgba(22, 93, 255, 0.1)',
+              borderWidth: 2,
+              tension: 0.2,
+              fill: true,
+              pointBackgroundColor: '#165DFF',
+              pointRadius: 4,
+              pointHoverRadius: 6
+            },
+            {
+              label: '趋势线',
+              data: trendData,
+              borderColor: '#0FC6C2',
+              borderWidth: 2,
+              borderDash: [5, 5],
+              pointRadius: 0,
+              fill: false
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: {
+              position: 'top',
+            },
+            tooltip: {
+              mode: 'index',
+              intersect: false,
+              callbacks: {
+                label: function(context) {
+                  let label = context.dataset.label || '';
+                  if (label) {
+                    label += ': ';
+                  }
+                  if (context.parsed.y !== null) {
+                    label += new Intl.NumberFormat('zh-CN', { style: 'currency', currency: 'CNY' }).format(context.parsed.y);
+                  }
+                  return label;
+                }
+              }
+            }
+          },
+          scales: {
+            y: {
+              beginAtZero: false,
+              ticks: {
+                callback: function(value) {
+                  return '¥' + value;
+                }
+              }
+            }
+          }
+        }
+      });
+    }
+    
+    // 计算趋势线
+    function calculateTrend(data) {
+      if (data.length < 2) return data;
+      
+      const n = data.length;
+      let sumX = 0, sumY = 0, sumXY = 0, sumX2 = 0;
+      
+      for (let i = 0; i < n; i++) {
+        const x = i;
+        const y = data[i];
+        sumX += x;
+        sumY += y;
+        sumXY += x * y;
+        sumX2 += x * x;
+      }
+      
+      const slope = (n * sumXY - sumX * sumY) / (n * sumX2 - sumX * sumX);
+      const intercept = (sumY - slope * sumX) / n;
+      
+      return data.map((_, i) => intercept + slope * i);
+    }
+    
+    // 渲染价格历史表格
+    function renderPriceHistory() {
+      const container = document.getElementById('price-history');
+      container.innerHTML = '';
+      
+      Object.entries(priceData.productHistories).forEach(([product, history]) => {
+        if (history.length === 0) return;
+        
+        const tableContainer = document.createElement('div');
+        tableContainer.className = 'bg-white rounded-lg overflow-hidden card-shadow';
+        
+        const tableHeader = document.createElement('div');
+        tableHeader.className = 'bg-primary text-white p-4';
+        tableHeader.innerHTML = `
+          <h3 class="font-bold">${product} 价格历史</h3>
+        `;
+        
+        const table = document.createElement('table');
+        table.className = 'w-full border-collapse';
+        table.innerHTML = `
+          <thead>
+            <tr class="bg-gray-50">
+              <th class="py-3 px-4 text-left text-sm font-semibold text-gray-600">日期</th>
+              <th class="py-3 px-4 text-left text-sm font-semibold text-gray-600">价格 (¥)</th>
+              <th class="py-3 px-4 text-left text-sm font-semibold text-gray-600">价格变动</th>
+            </tr>
+          </thead>
+          <tbody id="history-table-${product}">
+            <!-- 表格内容将在这里动态生成 -->
+          </tbody>
+        `;
+        
+        const tableBody = table.querySelector(`#history-table-${product}`);
+        
+        // 按日期从新到旧排序
+        const sortedHistory = [...history].sort((a, b) => new Date(b.date) - new Date(a.date));
+        
+        sortedHistory.forEach((item, index) => {
+          const row = document.createElement('tr');
+          row.className = index % 2 === 0 ? 'bg-white' : 'bg-gray-50';
+          
+          // 计算与前一天的价格变动
+          let change = '';
+          let changeClass = '';
+          
+          if (index < sortedHistory.length - 1) {
+            const prevPrice = sortedHistory[index + 1].price;
+            const priceChange = item.price - prevPrice;
+            
+            if (priceChange > 0) {
+              change = `↑ ${priceChange.toFixed(2)}`;
+              changeClass = 'text-danger';
+            } else if (priceChange < 0) {
+              change = `↓ ${Math.abs(priceChange).toFixed(2)}`;
+              changeClass = 'text-success';
+            } else {
+              change = '—';
+              changeClass = 'text-gray-500';
+            }
+          } else {
+            change = '首次记录';
+            changeClass = 'text-gray-500';
+          }
+          
+          row.innerHTML = `
+            <td class="py-3 px-4 text-sm">${formatDate(item.date)}</td>
+            <td class="py-3 px-4 text-sm font-medium">${item.price}</td>
+            <td class="py-3 px-4 text-sm ${changeClass}">${change}</td>
+          `;
+          
+          tableBody.appendChild(row);
+        });
+        
+        tableContainer.appendChild(tableHeader);
+        tableContainer.appendChild(table);
+        container.appendChild(tableContainer);
+      });
+    }
+    
+    // 页面加载完成后加载数据
+    document.addEventListener('DOMContentLoaded', loadPriceData);
+  </script>
+</body>
+</html>
