@@ -1,0 +1,49 @@
+# .github/workflows/price-monitor.yml
+name: 价格监控
+
+on:
+  schedule:
+    - cron: '0 0 * * *'  # 每天午夜执行
+  workflow_dispatch:  # 允许手动触发
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        
+      - name: 设置Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+          
+      - name: 安装依赖
+        run: npm install nodemailer dayjs
+        
+      - name: 运行价格监控
+        env:
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_SECURE: ${{ secrets.SMTP_SECURE }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          API_COOKIES: ${{ secrets.API_COOKIES }}
+        run: node .github/workflows/price-monitor.js
+        
+      - name: 提交数据变更
+        run: |
+          git config user.name "GitHub Actions Bot"
+          git config user.email "noreply@github.com"
+          git add data/ docs/price-data.json
+          git commit -m "自动更新价格数据" || echo "没有数据变更需要提交"
+          git push || echo "没有数据变更需要推送"
+          
+      - name: 部署到GitHub Pages
+        if: github.ref == 'refs/heads/main'
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./docs
