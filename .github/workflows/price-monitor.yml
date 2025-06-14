@@ -9,12 +9,12 @@ on:
 jobs:
   monitor:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write  # 必须添加这个权限！
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0  # 获取完整的提交历史，以便能够push
-          
+        
       - name: 设置Node.js
         uses: actions/setup-node@v4
         with:
@@ -35,34 +35,9 @@ jobs:
           API_COOKIES: ${{ secrets.API_COOKIES }}
         run: node .github/workflows/price-monitor.js
         
-      - name: 调试：显示当前目录结构
-        run: |
-          echo "当前目录内容:"
-          ls -la
-          echo "docs目录内容:"
-          ls -la docs || echo "docs目录不存在"
-          echo "data目录内容:"
-          ls -la data || echo "data目录不存在"
-          
-      - name: 提交数据变更
-        continue-on-error: true  # 即使失败也继续执行后续步骤
-        run: |
-          # 检查是否有文件变更
-          if [ -n "$(git status --porcelain)" ]; then
-            echo "检测到文件变更，准备提交..."
-            git config user.name "GitHub Actions Bot"
-            git config user.email "noreply@github.com"
-            git add data/ docs/price-data.json
-            git commit -m "自动更新价格数据"
-            git push
-            echo "数据已成功提交并推送"
-          else
-            echo "没有检测到文件变更，无需提交"
-          fi
-          
       - name: 部署到GitHub Pages
         if: github.ref == 'refs/heads/main'
         uses: peaceiris/actions-gh-pages@v3
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}  # 使用自动生成的token
           publish_dir: ./docs
