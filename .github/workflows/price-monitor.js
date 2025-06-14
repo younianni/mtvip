@@ -10,9 +10,9 @@ dayjs.extend(customParseFormat);
 // 配置信息
 const config = {
   apiUrl: 'https://shop.mt2.cn/ajax.php?act=gettool&cid=2&info=1',
-  dataDir: path.join(__dirname, '../data'),
-  priceHistoryFile: path.join(__dirname, '../data/price-history.json'),
-  weeklyReportFile: path.join(__dirname, '../data/weekly-report.json'),
+  dataDir: path.join(__dirname, '../../data'),
+  priceHistoryFile: path.join(__dirname, '../../data/price-history.json'),
+  weeklyReportFile: path.join(__dirname, '../../data/weekly-report.json'),
   email: {
     from: process.env.EMAIL_FROM,
     to: process.env.EMAIL_TO,
