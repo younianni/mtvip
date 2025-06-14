@@ -35,32 +35,49 @@ const config = {
   }
 };
 
-// 初始化数据目录
-async function initDataDir() {
+// 确保目录存在
+async function ensureDirectoryExists(dirPath) {
   try {
-    await fs.mkdir(config.dataDir, { recursive: true });
-    // 确保历史文件存在
-    try {
-      await fs.access(config.priceHistoryFile);
-    } catch {
-      await fs.writeFile(config.priceHistoryFile, JSON.stringify({}, null, 2));
-    }
-    // 确保周报文件存在
-    try {
-      await fs.access(config.weeklyReportFile);
-    } catch {
-      await fs.writeFile(config.weeklyReportFile, JSON.stringify({}, null, 2));
-    }
+    await fs.mkdir(dirPath, { recursive: true });
+    console.log(`目录已创建: ${dirPath}`);
   } catch (error) {
-    console.error('初始化数据目录失败:', error);
-    throw error;
+    if (error.code !== 'EEXIST') {
+      console.error(`创建目录失败: ${dirPath}`, error);
+      throw error;
+    }
+    console.log(`目录已存在: ${dirPath}`);
   }
+}
+
+// 确保文件存在
+async function ensureFileExists(filePath, defaultContent = '{}') {
+  try {
+    await fs.access(filePath);
+    console.log(`文件已存在: ${filePath}`);
+  } catch (error) {
+    if (error.code === 'ENOENT') {
+      await ensureDirectoryExists(path.dirname(filePath));
+      await fs.writeFile(filePath, defaultContent, 'utf8');
+      console.log(`文件已创建: ${filePath}`);
+    } else {
+      console.error(`检查文件失败: ${filePath}`, error);
+      throw error;
+    }
+  }
+}
+
+// 初始化数据目录和文件
+async function initData() {
+  await ensureDirectoryExists(config.dataDir);
+  await ensureFileExists(config.priceHistoryFile);
+  await ensureFileExists(config.weeklyReportFile);
+  await ensureDirectoryExists(path.join(__dirname, '../docs'));
 }
 
 // 主函数
 async function main() {
   try {
-    await initDataDir();
+    await initData();
     
     // 获取当前日期
     const today = dayjs().format('YYYY-MM-DD');
@@ -155,6 +172,7 @@ async function fetchPriceData() {
 // 读取价格历史记录
 async function readPriceHistory() {
   try {
+    await ensureFileExists(config.priceHistoryFile);
     const content = await fs.readFile(config.priceHistoryFile, 'utf8');
     return JSON.parse(content);
   } catch (error) {
@@ -189,6 +207,7 @@ function checkPriceChanges(currentPrices, history) {
 async function updatePriceHistory(date, currentPrices, history) {
   history[date] = currentPrices;
   
+  await ensureDirectoryExists(path.dirname(config.priceHistoryFile));
   await fs.writeFile(
     config.priceHistoryFile,
     JSON.stringify(history, null, 2),
@@ -298,6 +317,7 @@ async function generateAndSendWeeklyReport(history) {
     data: weeklyData
   };
   
+  await ensureDirectoryExists(path.dirname(config.weeklyReportFile));
   await fs.writeFile(
     config.weeklyReportFile,
     JSON.stringify(reportData, null, 2),
@@ -307,47 +327,58 @@ async function generateAndSendWeeklyReport(history) {
 
 // 更新GitHub Pages数据
 async function updateGitHubPagesData(history) {
-  // 提取最新价格
-  const latestDate = Object.keys(history).sort().reverse()[0];
-  const latestPrices = latestDate ? history[latestDate] : {};
-  
-  // 提取所有产品名称
-  const products = [...new Set(
-    Object.values(history)
-      .flatMap(dateData => Object.keys(dateData))
-  )];
-  
-  // 为每个产品准备价格历史
-  const productHistories = {};
-  products.forEach(product => {
-    productHistories[product] = Object.entries(history)
-      .filter(([date, data]) => data[product])
-      .map(([date, data]) => ({
-        date,
-        price: data[product].price
-      }))
-      .sort((a, b) => new Date(a.date) - new Date(b.date));
-  });
-  
-  // 构建要保存的数据
-  const pageData = {
-    lastUpdated: new Date().toISOString(),
-    latestPrices,
-    productHistories
-  };
-
-  // 创建docs目录（如果不存在）
-  const docsDir = path.join(__dirname, '../docs');
-  await fs.mkdir(docsDir, { recursive: true });
-  
-  // 写入GitHub Pages目录
-  await fs.writeFile(
-    path.join(__dirname, '../docs/price-data.json'),
-    JSON.stringify(pageData, null, 2),
-    'utf8'
-  );
-  
-  console.log('已更新GitHub Pages数据');
+  try {
+    // 提取最新价格
+    const latestDate = Object.keys(history).sort().reverse()[0];
+    const latestPrices = latestDate ? history[latestDate] : {};
+    
+    // 提取所有产品名称
+    const products = [...new Set(
+      Object.values(history)
+        .flatMap(dateData => Object.keys(dateData))
+    )];
+    
+    // 为每个产品准备价格历史
+    const productHistories = {};
+    products.forEach(product => {
+      productHistories[product] = Object.entries(history)
+        .filter(([date, data]) => data[product])
+        .map(([date, data]) => ({
+          date,
+          price: data[product].price
+        }))
+        .sort((a, b) => new Date(a.date) - new Date(b.date));
+    });
+    
+    // 构建要保存的数据
+    const pageData = {
+      lastUpdated: new Date().toISOString(),
+      latestPrices,
+      productHistories
+    };
+    
+    // 创建docs目录（如果不存在）
+    const docsDir = path.join(__dirname, '../docs');
+    await ensureDirectoryExists(docsDir);
+    
+    // 写入GitHub Pages目录
+    const filePath = path.join(docsDir, 'price-data.json');
+    await fs.writeFile(filePath, JSON.stringify(pageData, null, 2), 'utf8');
+    
+    console.log('已更新GitHub Pages数据:', filePath);
+    
+    // 验证文件是否存在
+    try {
+      await fs.access(filePath);
+      console.log('验证: 文件存在:', filePath);
+    } catch (error) {
+      console.error('验证失败: 文件不存在:', filePath);
+      throw error;
+    }
+  } catch (error) {
+    console.error('更新GitHub Pages数据失败:', error);
+    throw error;
+  }
 }
 
 // 执行主函数
