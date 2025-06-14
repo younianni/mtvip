@@ -13,6 +13,7 @@ const config = {
   dataDir: path.join(__dirname, '../../data'),
   priceHistoryFile: path.join(__dirname, '../../data/price-history.json'),
   weeklyReportFile: path.join(__dirname, '../../data/weekly-report.json'),
+  githubPagesDir: path.join(__dirname, '../../docs'),
   email: {
     from: process.env.EMAIL_FROM,
     to: process.env.EMAIL_TO,
@@ -91,13 +92,22 @@ async function safeWriteFile(filePath, content) {
   }
 }
 
+// 获取最新价格
+function getLatestPrices(history) {
+  const allDates = Object.keys(history).sort();
+  if (allDates.length === 0) return {};
+  
+  const latestDate = allDates[allDates.length - 1];
+  return history[latestDate] || {};
+}
+
 // 初始化数据目录和文件
 async function initData() {
   console.log('开始初始化数据目录...');
   await ensureDirectoryExists(config.dataDir);
   await ensureFileExists(config.priceHistoryFile);
   await ensureFileExists(config.weeklyReportFile);
-  await ensureDirectoryExists(path.join(__dirname, '../docs'));
+  await ensureDirectoryExists(config.githubPagesDir);
   console.log('数据目录初始化完成');
 }
 
@@ -120,7 +130,7 @@ async function main() {
     console.log(`已读取历史价格记录，包含 ${Object.keys(history).length} 天数据`);
     
     // 检查价格变动并发送通知
-    const priceChanges = checkPriceChanges(priceData, history);
+    const priceChanges = checkPriceChanges(priceData, history, today);
     if (priceChanges.length > 0) {
       console.log(`检测到 ${priceChanges.length} 个价格变动`);
       await sendPriceChangeEmail(priceChanges);
@@ -134,7 +144,7 @@ async function main() {
     console.log('价格历史记录已更新');
     
     // 如果是周一，生成并发送周报
-    if (dayjs().day() === 1) {
+    if (dayjs().day() === 1) { // 1表示周一
       console.log('今天是周一，生成周报告...');
       await generateAndSendWeeklyReport(history);
       console.log('周报告已生成并发送');
@@ -233,7 +243,7 @@ async function readPriceHistory() {
 }
 
 // 检查价格变动
-function checkPriceChanges(currentPrices, history) {
+function checkPriceChanges(currentPrices, history, today) {
   const changes = [];
   const yesterday = dayjs().subtract(1, 'day').format('YYYY-MM-DD');
   
@@ -258,9 +268,16 @@ function checkPriceChanges(currentPrices, history) {
 
 // 更新价格历史记录
 async function updatePriceHistory(date, currentPrices, history) {
-  history[date] = currentPrices;
+  // 确保当天数据存在
+  if (!history[date]) {
+    history[date] = {};
+  }
   
-  await ensureDirectoryExists(path.dirname(config.priceHistoryFile));
+  // 更新当天的价格数据
+  for (const [name, priceInfo] of Object.entries(currentPrices)) {
+    history[date][name] = priceInfo;
+  }
+  
   await safeWriteFile(
     config.priceHistoryFile,
     JSON.stringify(history, null, 2)
@@ -304,7 +321,6 @@ async function sendPriceChangeEmail(changes) {
 async function generateAndSendWeeklyReport(history) {
   const today = dayjs();
   const weekAgo = today.subtract(1, 'week');
-  
   console.log(`生成周报告，周期: ${weekAgo.format('YYYY-MM-DD')} 至 ${today.format('YYYY-MM-DD')}`);
   
   // 收集本周的数据
@@ -315,7 +331,9 @@ async function generateAndSendWeeklyReport(history) {
   for (let d = weekAgo; d.isBefore(today); d = d.add(1, 'day')) {
     const dateStr = d.format('YYYY-MM-DD');
     if (history[dateStr]) {
-      for (const [product, info] of Object.entries(history[dateStr])) {
+      // 取当天最后一次更新的价格
+      const dateData = history[dateStr];
+      for (const [product, info] of Object.entries(dateData)) {
         allProducts.add(product);
         if (!weeklyData[product]) weeklyData[product] = {};
         weeklyData[product][dateStr] = info.price;
@@ -376,7 +394,6 @@ async function generateAndSendWeeklyReport(history) {
     data: weeklyData
   };
   
-  await ensureDirectoryExists(path.dirname(config.weeklyReportFile));
   await safeWriteFile(
     config.weeklyReportFile,
     JSON.stringify(reportData, null, 2)
@@ -388,9 +405,8 @@ async function updateGitHubPagesData(history) {
   try {
     console.log('开始更新GitHub Pages数据...');
     
-    // 提取最新价格
-    const latestDate = Object.keys(history).sort().reverse()[0];
-    const latestPrices = latestDate ? history[latestDate] : {};
+    // 提取所有日期并排序
+    const allDates = Object.keys(history).sort();
     
     // 提取所有产品名称
     const products = [...new Set(
@@ -400,31 +416,29 @@ async function updateGitHubPagesData(history) {
     
     console.log(`提取了 ${products.length} 个产品的历史数据`);
     
-    // 为每个产品准备价格历史
+    // 为每个产品准备价格历史，包含每天的最后一次价格
     const productHistories = {};
     products.forEach(product => {
-      productHistories[product] = Object.entries(history)
-        .filter(([date, data]) => data[product])
-        .map(([date, data]) => ({
+      productHistories[product] = allDates.map(date => {
+        const priceInfo = history[date]?.[product];
+        return {
           date,
-          price: data[product].price
-        }))
-        .sort((a, b) => new Date(a.date) - new Date(b.date));
+          price: priceInfo?.price || null,
+          timestamp: priceInfo?.timestamp
+        };
+      }).filter(item => item.price !== null);
     });
     
     // 构建要保存的数据
     const pageData = {
       lastUpdated: new Date().toISOString(),
-      latestPrices,
-      productHistories
+      latestPrices: getLatestPrices(history),
+      productHistories,
+      allDates
     };
     
-    // 创建docs目录（如果不存在）
-    const docsDir = path.join(__dirname, '../docs');
-    await ensureDirectoryExists(docsDir);
-    
     // 写入GitHub Pages目录
-    const filePath = path.join(docsDir, 'price-data.json');
+    const filePath = path.join(config.githubPagesDir, 'price-data.json');
     await safeWriteFile(filePath, JSON.stringify(pageData, null, 2));
     
     console.log('GitHub Pages数据更新完成');
