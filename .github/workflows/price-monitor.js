@@ -305,7 +305,7 @@ async function sendPriceChangeEmail(changes) {
     to: config.email.to,
     subject: 'MT卡密价格变动通知',
     html: `
-      <h3>MT卡密价格变动通知</h3>
+      <h3>MT卡密价格变动通知-https://younianni.github.io/mtvip/</h3>
       <p>以下商品价格发生了变动:</p>
       ${priceChangesHtml}
       <p>当前时间: ${new Date().toLocaleString()}</p>
