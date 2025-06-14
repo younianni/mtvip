@@ -144,7 +144,7 @@ async function main() {
     console.log('价格历史记录已更新');
     
     // 如果是周一，生成并发送周报
-    if (dayjs().day() === 1) { // 1表示周一
+    if (dayjs().day() === 7) { // 1表示周一
       console.log('今天是周一，生成周报告...');
       await generateAndSendWeeklyReport(history);
       console.log('周报告已生成并发送');
