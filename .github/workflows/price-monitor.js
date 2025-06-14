@@ -335,6 +335,10 @@ async function updateGitHubPagesData(history) {
     latestPrices,
     productHistories
   };
+
+  // 创建docs目录（如果不存在）
+  const docsDir = path.join(__dirname, '../docs');
+  await fs.mkdir(docsDir, { recursive: true });
   
   // 写入GitHub Pages目录
   await fs.writeFile(
