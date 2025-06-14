@@ -1,6 +1,6 @@
 // .github/workflows/price-monitor.js
 const https = require('https');
-const fs = require('fs').promises; // 使用Promise版本的fs
+const fs = require('fs').promises;
 const path = require('path');
 const nodemailer = require('nodemailer');
 const dayjs = require('dayjs');
@@ -10,7 +10,7 @@ dayjs.extend(customParseFormat);
 // 配置信息
 const config = {
   apiUrl: 'https://shop.mt2.cn/ajax.php?act=gettool&cid=2&info=1',
-  dataDir: path.join(__dirname, '../data'), // 存储数据的目录
+  dataDir: path.join(__dirname, '../data'),
   priceHistoryFile: path.join(__dirname, '../data/price-history.json'),
   weeklyReportFile: path.join(__dirname, '../data/weekly-report.json'),
   email: {
@@ -66,32 +66,63 @@ async function ensureFileExists(filePath, defaultContent = '{}') {
   }
 }
 
+// 安全写入文件（带验证）
+async function safeWriteFile(filePath, content) {
+  const tempPath = `${filePath}.tmp`;
+  
+  try {
+    // 写入临时文件
+    await fs.writeFile(tempPath, content, 'utf8');
+    
+    // 验证临时文件内容
+    const writtenContent = await fs.readFile(tempPath, 'utf8');
+    if (writtenContent !== content) {
+      throw new Error('写入内容与预期不符');
+    }
+    
+    // 原子性替换目标文件
+    await fs.rename(tempPath, filePath);
+    console.log(`文件写入成功: ${filePath}`);
+  } catch (error) {
+    // 发生错误时删除临时文件
+    try { await fs.unlink(tempPath); } catch {}
+    console.error(`文件写入失败: ${filePath}`, error);
+    throw error;
+  }
+}
+
 // 初始化数据目录和文件
 async function initData() {
+  console.log('开始初始化数据目录...');
   await ensureDirectoryExists(config.dataDir);
   await ensureFileExists(config.priceHistoryFile);
   await ensureFileExists(config.weeklyReportFile);
   await ensureDirectoryExists(path.join(__dirname, '../docs'));
+  console.log('数据目录初始化完成');
 }
 
 // 主函数
 async function main() {
   try {
+    console.log('===== 价格监控任务开始 =====');
     await initData();
     
     // 获取当前日期
     const today = dayjs().format('YYYY-MM-DD');
+    console.log(`当前日期: ${today}`);
     
     // 发送请求获取价格数据
     const priceData = await fetchPriceData();
-    console.log('获取到价格数据:', priceData);
+    console.log('获取到价格数据:', JSON.stringify(priceData, null, 2));
     
     // 读取历史价格记录
     const history = await readPriceHistory();
+    console.log(`已读取历史价格记录，包含 ${Object.keys(history).length} 天数据`);
     
     // 检查价格变动并发送通知
     const priceChanges = checkPriceChanges(priceData, history);
     if (priceChanges.length > 0) {
+      console.log(`检测到 ${priceChanges.length} 个价格变动`);
       await sendPriceChangeEmail(priceChanges);
       console.log('已发送价格变动通知邮件');
     } else {
@@ -100,15 +131,22 @@ async function main() {
     
     // 更新价格历史记录
     await updatePriceHistory(today, priceData, history);
+    console.log('价格历史记录已更新');
     
     // 如果是周一，生成并发送周报
-    if (dayjs().day() === 1) { // 1表示周一
+    if (dayjs().day() === 1) {
+      console.log('今天是周一，生成周报告...');
       await generateAndSendWeeklyReport(history);
+      console.log('周报告已生成并发送');
+    } else {
+      console.log('今天不是周一，跳过周报告生成');
     }
     
     // 更新GitHub Pages数据
     await updateGitHubPagesData(history);
+    console.log('GitHub Pages数据已更新');
     
+    console.log('===== 价格监控任务完成 =====');
   } catch (error) {
     console.error('价格监控任务执行失败:', error);
     process.exit(1);
@@ -117,6 +155,8 @@ async function main() {
 
 // 发送请求获取价格数据
 async function fetchPriceData() {
+  console.log('开始请求API数据...');
+  
   return new Promise((resolve, reject) => {
     const options = {
       hostname: 'shop.mt2.cn',
@@ -129,6 +169,8 @@ async function fetchPriceData() {
     };
     
     const req = https.request(options, (response) => {
+      console.log(`API响应状态码: ${response.statusCode}`);
+      
       let data = '';
       
       response.on('data', (chunk) => {
@@ -136,8 +178,12 @@ async function fetchPriceData() {
       });
       
       response.on('end', () => {
+        console.log(`API响应长度: ${data.length} 字节`);
+        
         try {
           const parsedData = JSON.parse(data);
+          console.log('API响应解析成功');
+          
           if (parsedData.code === 0 && parsedData.data) {
             // 提取价格信息
             const prices = parsedData.data.reduce((result, item) => {
@@ -147,12 +193,16 @@ async function fetchPriceData() {
               };
               return result;
             }, {});
+            
+            console.log(`成功提取 ${Object.keys(prices).length} 个产品价格`);
             resolve(prices);
           } else {
-            reject(new Error('API响应错误: ' + (parsedData.msg || '未知错误，状态码:' + response.status)));
+            reject(new Error('API响应错误: ' + (parsedData.msg || '未知错误，状态码:' + response.statusCode)));
           }
         } catch (error) {
-          reject(new Error('解析响应数据失败: ' + error.message + ', 原始数据: ' + data));
+          // 打印原始响应数据以便调试
+          console.error('原始API响应:', data.substring(0, 500) + (data.length > 500 ? '...' : ''));
+          reject(new Error('解析响应数据失败: ' + error.message));
         }
       });
       
@@ -174,7 +224,8 @@ async function readPriceHistory() {
   try {
     await ensureFileExists(config.priceHistoryFile);
     const content = await fs.readFile(config.priceHistoryFile, 'utf8');
-    return JSON.parse(content);
+    const history = JSON.parse(content);
+    return history;
   } catch (error) {
     console.error('读取历史价格记录失败:', error);
     return {};
@@ -185,6 +236,8 @@ async function readPriceHistory() {
 function checkPriceChanges(currentPrices, history) {
   const changes = [];
   const yesterday = dayjs().subtract(1, 'day').format('YYYY-MM-DD');
+  
+  console.log(`检查与 ${yesterday} 的价格差异`);
   
   for (const [name, currentPrice] of Object.entries(currentPrices)) {
     // 获取昨天的价格
@@ -208,10 +261,9 @@ async function updatePriceHistory(date, currentPrices, history) {
   history[date] = currentPrices;
   
   await ensureDirectoryExists(path.dirname(config.priceHistoryFile));
-  await fs.writeFile(
+  await safeWriteFile(
     config.priceHistoryFile,
-    JSON.stringify(history, null, 2),
-    'utf8'
+    JSON.stringify(history, null, 2)
   );
 }
 
@@ -243,13 +295,17 @@ async function sendPriceChangeEmail(changes) {
     `
   };
   
+  console.log(`准备发送价格变动邮件，包含 ${changes.length} 个变动`);
   await transporter.sendMail(mailOptions);
+  console.log('价格变动邮件已发送');
 }
 
 // 生成并发送周报
 async function generateAndSendWeeklyReport(history) {
   const today = dayjs();
   const weekAgo = today.subtract(1, 'week');
+  
+  console.log(`生成周报告，周期: ${weekAgo.format('YYYY-MM-DD')} 至 ${today.format('YYYY-MM-DD')}`);
   
   // 收集本周的数据
   const weeklyData = {};
@@ -266,6 +322,8 @@ async function generateAndSendWeeklyReport(history) {
       }
     }
   }
+  
+  console.log(`周报告包含 ${allProducts.size} 个产品的数据`);
   
   // 生成周报HTML
   let weeklyReportHtml = '<h3>MT卡密价格周报</h3>';
@@ -306,8 +364,9 @@ async function generateAndSendWeeklyReport(history) {
     html: weeklyReportHtml
   };
   
+  console.log('准备发送周报告邮件');
   await transporter.sendMail(mailOptions);
-  console.log('已发送周价格报告邮件');
+  console.log('周报告邮件已发送');
   
   // 保存周报数据
   const reportData = {
@@ -318,16 +377,17 @@ async function generateAndSendWeeklyReport(history) {
   };
   
   await ensureDirectoryExists(path.dirname(config.weeklyReportFile));
-  await fs.writeFile(
+  await safeWriteFile(
     config.weeklyReportFile,
-    JSON.stringify(reportData, null, 2),
-    'utf8'
+    JSON.stringify(reportData, null, 2)
   );
 }
 
 // 更新GitHub Pages数据
 async function updateGitHubPagesData(history) {
   try {
+    console.log('开始更新GitHub Pages数据...');
+    
     // 提取最新价格
     const latestDate = Object.keys(history).sort().reverse()[0];
     const latestPrices = latestDate ? history[latestDate] : {};
@@ -337,6 +397,8 @@ async function updateGitHubPagesData(history) {
       Object.values(history)
         .flatMap(dateData => Object.keys(dateData))
     )];
+    
+    console.log(`提取了 ${products.length} 个产品的历史数据`);
     
     // 为每个产品准备价格历史
     const productHistories = {};
@@ -363,23 +425,15 @@ async function updateGitHubPagesData(history) {
     
     // 写入GitHub Pages目录
     const filePath = path.join(docsDir, 'price-data.json');
-    await fs.writeFile(filePath, JSON.stringify(pageData, null, 2), 'utf8');
+    await safeWriteFile(filePath, JSON.stringify(pageData, null, 2));
     
-    console.log('已更新GitHub Pages数据:', filePath);
-    
-    // 验证文件内容
-    const fileContent = await fs.readFile(filePath, 'utf8');
-    try {
-      JSON.parse(fileContent);
-      console.log('验证: 文件内容是有效的JSON');
-    } catch (error) {
-      console.error('验证失败: 文件内容不是有效的JSON');
-      console.error('文件内容:', fileContent);
-      throw new Error('生成的JSON文件格式不正确');
-    }
+    console.log('GitHub Pages数据更新完成');
     
   } catch (error) {
     console.error('更新GitHub Pages数据失败:', error);
     throw error;
   }
 }
+
+// 执行主函数
+main();
